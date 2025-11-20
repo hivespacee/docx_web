@@ -1,5 +1,5 @@
-import React, { useMemo } from 'react';
-import { DocumentEditor } from '@onlyoffice/document-editor-react';
+import React, { useEffect, useRef, useState } from "react";
+import { DocumentEditor } from "@onlyoffice/document-editor-react";
 
 const OnlyOfficeEditor = ({
   documentServerUrl,
@@ -14,22 +14,38 @@ const OnlyOfficeEditor = ({
   onRequestSave,
   onStateChange,
 }) => {
-  const config = useMemo(() => {
+  const saveRef = useRef(onRequestSave);
+  const stateRef = useRef(onStateChange);
+
+  useEffect(() => {
+    saveRef.current = onRequestSave;
+  }, [onRequestSave]);
+
+  useEffect(() => {
+    stateRef.current = onStateChange;
+  }, [onStateChange]);
+
+  const [editorConfig, setEditorConfig] = useState(null);
+  const [editorId, setEditorId] = useState("");
+
+  useEffect(() => {
     if (!documentUrl || !documentKey) {
-      return null;
+      setEditorConfig(null);
+      setEditorId("");
+      return;
     }
 
-    return {
-      documentType: 'word',
-      width: '100%',
-      height: '100%',
+    setEditorConfig({
+      documentType: "word",
+      width: "100%",
+      height: "100%",
       document: {
-        fileType: fileType || 'docx',
+        fileType: fileType || "docx",
         key: documentKey,
-        title: documentTitle || 'Untitled Document',
+        title: documentTitle || "Untitled Document",
         url: documentUrl,
         permissions: {
-          edit: mode === 'edit',
+          edit: mode === "edit",
           download: allowDownload,
           print: allowPrint,
           review: enableCollaboration,
@@ -38,9 +54,9 @@ const OnlyOfficeEditor = ({
       },
       editorConfig: {
         mode,
-        lang: 'en',
+        lang: "en",
         collaboration: {
-          mode: enableCollaboration ? 'fast' : 'strict',
+          mode: enableCollaboration ? "fast" : "strict",
           change: enableCollaboration,
         },
         customization: {
@@ -53,34 +69,33 @@ const OnlyOfficeEditor = ({
           toolbarNoTabs: false,
         },
         user: {
-          id: 'user-1',
-          name: 'OnlyOffice User',
-          group: enableCollaboration ? 'Editors' : 'Viewer',
+          id: "user-1",
+          name: "OnlyOffice User",
+          group: enableCollaboration ? "Editors" : "Viewer",
         },
       },
       events: {
         onDocumentStateChange: (event) => {
-          onStateChange?.(event.data);
+          stateRef.current?.(event.data);
         },
         onRequestSaveAs: (event) => {
-          onRequestSave?.(event.data);
+          saveRef.current?.(event.data);
         },
         onError: (event) => {
-          console.error('ONLYOFFICE editor error', event);
+          console.error("ONLYOFFICE editor error", event);
         },
       },
-    };
+    });
+    setEditorId(`onlyoffice-${documentKey}`);
   }, [
-    allowDownload,
-    allowPrint,
+    documentUrl,
     documentKey,
     documentTitle,
-    documentUrl,
-    enableCollaboration,
     fileType,
     mode,
-    onRequestSave,
-    onStateChange,
+    allowPrint,
+    allowDownload,
+    enableCollaboration,
   ]);
 
   if (!documentServerUrl) {
@@ -91,7 +106,7 @@ const OnlyOfficeEditor = ({
     );
   }
 
-  if (!documentUrl || !documentKey || !config) {
+  if (!editorConfig || !editorId) {
     return (
       <div className="flex h-[calc(100vh-2rem)] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-slate-500">
         Select a document to load the editor.
@@ -101,13 +116,14 @@ const OnlyOfficeEditor = ({
 
   return (
     <div className="h-[calc(100vh-2rem)] overflow-hidden rounded-2xl shadow-2xl shadow-slate-900/10">
+      {console.log(editorConfig.document.url)}
       <DocumentEditor
-        id={`onlyoffice-${documentKey}`}
+        id={editorId}
         documentServerUrl={documentServerUrl}
-        config={config}
-        onLoadComponentError={(code, description) => {
-          console.error('ONLYOFFICE loader error', code, description);
-        }}
+        config={editorConfig}
+        onLoadComponentError={(code, description) =>
+          console.error("ONLYOFFICE loader error", code, description)
+        }
       />
     </div>
   );

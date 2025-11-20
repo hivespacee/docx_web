@@ -1,46 +1,55 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import OnlyOfficeEditor from './components/OnlyOfficeEditor.jsx';
+import React, { useMemo, useState } from "react";
+import OnlyOfficeEditor from "./components/OnlyOfficeEditor.jsx";
 
-const ACCEPTED_TYPES = '.doc,.docx';
-const DEFAULT_DOCUMENT_SERVER = 'http://localhost:8080';
+const ACCEPTED_TYPES = ".doc,.docx";
+const DEFAULT_DOCUMENT_SERVER = "http://localhost:8080";
+const UPLOAD_API_BASE =
+  import.meta.env.VITE_UPLOAD_API_URL?.replace(/\/$/, "") ||
+  "http://localhost:5174";
 
 const randomKey = () =>
   window.crypto?.randomUUID?.() ??
   `doc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-const getFileType = (name = '') => {
-  const match = name.split('.').pop();
-  return match ? match.toLowerCase() : 'docx';
+const getFileType = (name = "") => {
+  const match = name.split(".").pop();
+  return match ? match.toLowerCase() : "docx";
 };
 
 const App = () => {
-  const [documentUrl, setDocumentUrl] = useState('');
-  const [documentTitle, setDocumentTitle] = useState('');
-  const [fileType, setFileType] = useState('docx');
-  const [documentKey, setDocumentKey] = useState('');
+  const [documentUrl, setDocumentUrl] = useState("");
+  const [documentTitle, setDocumentTitle] = useState("");
+  const [fileType, setFileType] = useState("docx");
+  const [documentKey, setDocumentKey] = useState("");
   const [documentServerUrl, setDocumentServerUrl] = useState(
-    DEFAULT_DOCUMENT_SERVER,
+    DEFAULT_DOCUMENT_SERVER
   );
-  const [mode, setMode] = useState('edit');
+
+  const [mode, setMode] = useState("edit");
   const [allowPrint, setAllowPrint] = useState(true);
   const [allowDownload, setAllowDownload] = useState(true);
   const [enableCollaboration, setEnableCollaboration] = useState(true);
+
   const [lastSaveEvent, setLastSaveEvent] = useState(null);
   const [isDirty, setIsDirty] = useState(false);
-  const [localFileUrl, setLocalFileUrl] = useState('');
-  const [remoteUrlInput, setRemoteUrlInput] = useState('');
-  const [uploadError, setUploadError] = useState('');
+
+  const [remoteUrlInput, setRemoteUrlInput] = useState("");
+  const [uploadError, setUploadError] = useState("");
+  const [isUploading, setIsUploading] = useState(false);
+  const [currentUploadId, setCurrentUploadId] = useState("");
 
   const summary = useMemo(
     () => [
-      `Document: ${documentTitle || 'No document selected'}`,
-      `Mode: ${mode === 'edit' ? 'Full editing' : 'View only'}`,
-      `Print: ${allowPrint ? 'enabled' : 'disabled'}`,
-      `Download: ${allowDownload ? 'enabled' : 'disabled'}`,
-      `Collaboration: ${enableCollaboration ? 'real-time' : 'solo'}`,
-      `State: ${isDirty ? 'Unsaved changes' : 'Synced'}`,
-      `Document Server: ${documentServerUrl ? documentServerUrl : 'not configured'
+      `Document: ${documentTitle || "No document selected"}`,
+      `Mode: ${mode === "edit" ? "Full editing" : "View only"}`,
+      `Print: ${allowPrint ? "enabled" : "disabled"}`,
+      `Download: ${allowDownload ? "enabled" : "disabled"}`,
+      `Collaboration: ${enableCollaboration ? "real-time" : "solo"}`,
+      `State: ${isDirty ? "Unsaved changes" : "Synced"}`,
+      `Document Server: ${
+        documentServerUrl ? documentServerUrl : "not configured"
       }`,
+      `Upload API: ${UPLOAD_API_BASE}`,
     ],
     [
       allowDownload,
@@ -50,7 +59,7 @@ const App = () => {
       enableCollaboration,
       isDirty,
       mode,
-    ],
+    ]
   );
 
   const handleSaveRequest = (saveEvent) => {
@@ -65,79 +74,115 @@ const App = () => {
     setIsDirty(Boolean(hasChanges));
   };
 
-  const handleFilePick = (event) => {
-    const selected = event.target.files?.[0];
-    if (!selected) {
-      return;
+  const deleteUpload = async (uploadId) => {
+    if (!uploadId) return;
+    try {
+      await fetch(`${UPLOAD_API_BASE}/api/uploads/${uploadId}`, {
+        method: "DELETE",
+      });
+    } catch (error) {
+      console.warn("Failed to delete upload", error);
     }
-    if (!selected.name.toLowerCase().endsWith('.docx') && !selected.name.toLowerCase().endsWith('.doc')) {
-      setUploadError('ONLYOFFICE demo server reliably opens DOC/DOCX files. Other formats may fail.');
-    }
-    else {
-      setUploadError('');
-    }
-    if (localFileUrl) {
-      URL.revokeObjectURL(localFileUrl);
-    }
-    const objectUrl = URL.createObjectURL(selected);
-    setLocalFileUrl(objectUrl);
-    setDocumentUrl(objectUrl);
-    setDocumentTitle(selected.name);
-    setFileType(getFileType(selected.name));
-    setDocumentKey(randomKey());
-    setRemoteUrlInput('');
   };
 
-  const applyRemoteUrl = () => {
-    if (!remoteUrlInput) {
+  const uploadFile = async (file) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    const response = await fetch(`${UPLOAD_API_BASE}/api/uploads`, {
+      method: "POST",
+      body: formData,
+    });
+    const payload = await response.json().catch(() => null);
+    console.log(payload);
+    if (!response.ok || !payload) {
+      throw new Error(payload?.message || "Upload failed. Please try again.");
+    }
+    return payload;
+  };
+
+  const handleFilePick = async (event) => {
+    const selected = event.target.files?.[0];
+    if (!selected) return;
+
+    if (
+      !selected.name.toLowerCase().endsWith(".docx") &&
+      !selected.name.toLowerCase().endsWith(".doc")
+    ) {
+      setUploadError("Only DOC or DOCX files are supported.");
+      event.target.value = "";
       return;
     }
-    if (localFileUrl) {
-      URL.revokeObjectURL(localFileUrl);
-      setLocalFileUrl('');
+
+    setUploadError("");
+    setIsUploading(true);
+
+    try {
+      if (currentUploadId) {
+        await deleteUpload(currentUploadId);
+        setCurrentUploadId("");
+      }
+
+      const uploadResult = await uploadFile(selected);
+      setDocumentUrl(uploadResult.url);
+      // console.log(uploadResult.url);
+      setDocumentTitle(uploadResult.originalName || selected.name);
+      setFileType(getFileType(uploadResult.url));
+      setDocumentKey(uploadResult.documentKey);
+      setRemoteUrlInput("");
+      setCurrentUploadId(uploadResult.uploadId || "");
+      setIsDirty(false);
+    } catch (error) {
+      console.error(error);
+      setUploadError(error.message || "Upload failed. Please try again.");
+    } finally {
+      setIsUploading(false);
+      event.target.value = "";
+    }
+  };
+
+  const applyRemoteUrl = async () => {
+    if (!remoteUrlInput) return;
+    if (currentUploadId) {
+      await deleteUpload(currentUploadId);
+      setCurrentUploadId("");
     }
     setDocumentUrl(remoteUrlInput);
     setFileType(getFileType(remoteUrlInput));
-    setDocumentTitle(remoteUrlInput.split('/').pop() || 'Remote document');
+    setDocumentTitle(remoteUrlInput.split("/").pop() || "Remote document");
     setDocumentKey(randomKey());
-    setUploadError('');
+    setUploadError("");
+    setIsDirty(false);
   };
 
-  const clearDocument = () => {
-    if (localFileUrl) {
-      URL.revokeObjectURL(localFileUrl);
-      setLocalFileUrl('');
+  const clearDocument = async () => {
+    if (currentUploadId) {
+      await deleteUpload(currentUploadId);
+      setCurrentUploadId("");
     }
-    setDocumentUrl('');
-    setDocumentTitle('');
-    setFileType('docx');
-    setDocumentKey('');
-    setRemoteUrlInput('');
+
+    setDocumentUrl("");
+    setDocumentTitle("");
+    setFileType("docx");
+    setDocumentKey("");
+    setRemoteUrlInput("");
     setLastSaveEvent(null);
     setIsDirty(false);
   };
 
-  useEffect(() => {
-    return () => {
-      if (localFileUrl) {
-        URL.revokeObjectURL(localFileUrl);
-      }
-    };
-  }, [localFileUrl]);
-
   const fieldLabelClass =
-    'flex flex-col gap-2 text-sm font-semibold text-slate-200';
+    "flex flex-col gap-2 text-sm font-semibold text-slate-200";
   const inputClass =
-    'rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400';
+    "rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400";
   const panelCardClass =
-    'rounded-2xl border border-white/10 bg-white/5 p-4 shadow-xl shadow-black/20';
+    "rounded-2xl border border-white/10 bg-white/5 p-4 shadow-xl shadow-black/20";
   const toggleButtonBase =
-    'rounded-full border px-4 py-2 text-sm font-semibold transition-colors';
+    "rounded-full border px-4 py-2 text-sm font-semibold transition-colors";
 
   return (
     <div className="min-h-screen bg-slate-100">
       <div className="grid min-h-screen grid-cols-1 lg:grid-cols-[360px,1fr]">
         <aside className="flex flex-col gap-6 bg-slate-950/95 p-6 text-slate-100 lg:p-8">
+          {/* Document Server Settings */}
           <section className={`${panelCardClass} flex flex-col gap-4`}>
             <div>
               <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
@@ -145,18 +190,20 @@ const App = () => {
               </p>
               <p className="text-lg font-semibold">Connection settings</p>
             </div>
+
             <label className={fieldLabelClass}>
               <span>Document Server URL</span>
               <input
                 type="url"
                 value={documentServerUrl}
-                onChange={(event) => setDocumentServerUrl(event.target.value)}
+                onChange={(e) => setDocumentServerUrl(e.target.value)}
                 placeholder="http://localhost:8080"
                 className={inputClass}
               />
             </label>
           </section>
 
+          {/* File Loading Panel */}
           <section className={`${panelCardClass} flex flex-col gap-4`}>
             <div>
               <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
@@ -164,50 +211,64 @@ const App = () => {
               </p>
               <p className="text-lg font-semibold">Load a DOC/DOCX file</p>
             </div>
+
             <label className={fieldLabelClass}>
               <span>Select from device</span>
               <input
                 type="file"
                 accept={ACCEPTED_TYPES}
                 onChange={handleFilePick}
-                className="text-sm text-slate-100 file:mr-4 file:rounded-lg file:border-0 file:bg-sky-500 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-slate-900 hover:file:bg-sky-400"
+                disabled={isUploading}
+                className="text-sm text-slate-100 file:mr-4 file:rounded-lg file:border-0 file:bg-sky-500 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-slate-900 hover:file:bg-sky-400 disabled:cursor-not-allowed disabled:opacity-50"
               />
             </label>
+
             <div className="text-center text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">
               or
             </div>
+
             <label className={fieldLabelClass}>
               <span>Paste a publicly reachable URL</span>
               <input
                 type="url"
                 value={remoteUrlInput}
-                onChange={(event) => setRemoteUrlInput(event.target.value)}
-                placeholder="https://storage.example.com/contract.docx"
+                onChange={(e) => setRemoteUrlInput(e.target.value)}
+                placeholder="https://example.com/file.docx"
                 className={inputClass}
               />
               <button
                 type="button"
                 onClick={applyRemoteUrl}
-                disabled={!remoteUrlInput}
+                disabled={!remoteUrlInput || isUploading}
                 className="mt-2 inline-flex items-center justify-center rounded-xl bg-sky-400 px-3 py-2 text-sm font-semibold text-slate-900 transition hover:bg-sky-300 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Use this URL
               </button>
             </label>
+
             {documentUrl && (
               <button
                 type="button"
                 onClick={clearDocument}
-                className="rounded-xl border border-white/20 px-3 py-2 text-sm font-semibold text-white transition hover:border-white/40"
+                disabled={isUploading}
+                className="rounded-xl border border-white/20 px-3 py-2 text-sm font-semibold text-white transition hover:border-white/40 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Remove current document
               </button>
             )}
+
+            {isUploading && (
+              <p className="text-sm text-slate-300">Uploading document…</p>
+            )}
+
             {uploadError && (
-              <p className="text-sm font-medium text-amber-300">{uploadError}</p>
+              <p className="text-sm font-medium text-amber-300">
+                {uploadError}
+              </p>
             )}
           </section>
 
+          {/* Metadata Panel */}
           <section className={`${panelCardClass} flex flex-col gap-4`}>
             <label className={fieldLabelClass}>
               <span>Active document URL</span>
@@ -225,12 +286,13 @@ const App = () => {
               <input
                 type="text"
                 value={documentTitle}
-                onChange={(event) => setDocumentTitle(event.target.value)}
+                onChange={(e) => setDocumentTitle(e.target.value)}
                 className={inputClass}
               />
             </label>
           </section>
 
+          {/* Editor Controls */}
           <section className={`${panelCardClass} flex flex-col gap-4`}>
             <div className="flex flex-col gap-2">
               <span className="text-sm font-semibold text-slate-200">Mode</span>
@@ -238,22 +300,22 @@ const App = () => {
                 <button
                   type="button"
                   className={`${toggleButtonBase} ${
-                    mode === 'edit'
-                      ? 'border-sky-400 bg-sky-400 text-slate-900'
-                      : 'border-white/20 bg-white/5 text-slate-100'
+                    mode === "edit"
+                      ? "border-sky-400 bg-sky-400 text-slate-900"
+                      : "border-white/20 bg-white/5 text-slate-100"
                   }`}
-                  onClick={() => setMode('edit')}
+                  onClick={() => setMode("edit")}
                 >
                   Full editing
                 </button>
                 <button
                   type="button"
                   className={`${toggleButtonBase} ${
-                    mode === 'view'
-                      ? 'border-sky-400 bg-sky-400 text-slate-900'
-                      : 'border-white/20 bg-white/5 text-slate-100'
+                    mode === "view"
+                      ? "border-sky-400 bg-sky-400 text-slate-900"
+                      : "border-white/20 bg-white/5 text-slate-100"
                   }`}
-                  onClick={() => setMode('view')}
+                  onClick={() => setMode("view")}
                 >
                   View only
                 </button>
@@ -264,7 +326,7 @@ const App = () => {
               <input
                 type="checkbox"
                 checked={allowPrint}
-                onChange={(event) => setAllowPrint(event.target.checked)}
+                onChange={(e) => setAllowPrint(e.target.checked)}
                 className="h-4 w-4 rounded border-white/40 bg-white/10 text-sky-400 focus:ring-sky-400"
               />
               Allow printing
@@ -274,7 +336,7 @@ const App = () => {
               <input
                 type="checkbox"
                 checked={allowDownload}
-                onChange={(event) => setAllowDownload(event.target.checked)}
+                onChange={(e) => setAllowDownload(e.target.checked)}
                 className="h-4 w-4 rounded border-white/40 bg-white/10 text-sky-400 focus:ring-sky-400"
               />
               Allow download/export
@@ -284,24 +346,25 @@ const App = () => {
               <input
                 type="checkbox"
                 checked={enableCollaboration}
-                onChange={(event) => setEnableCollaboration(event.target.checked)}
+                onChange={(e) => setEnableCollaboration(e.target.checked)}
                 className="h-4 w-4 rounded border-white/40 bg-white/10 text-sky-400 focus:ring-sky-400"
               />
               Enable real-time collaboration
             </label>
           </section>
 
+          {/* Session Summary */}
           <section className={`${panelCardClass} space-y-3`}>
-            <div>
-              <p className="text-xs uppercase tracking-[0.3em] text-slate-400">
-                Session summary
-              </p>
-            </div>
+            <p className="text-xs uppercase tracking-[0.3em] text-slate-400">
+              Session summary
+            </p>
+
             <ul className="space-y-1 text-sm text-slate-100/80">
               {summary.map((line) => (
                 <li key={line}>{line}</li>
               ))}
             </ul>
+
             {lastSaveEvent ? (
               <div className="rounded-lg bg-slate-900/60 p-3 text-sm">
                 <p className="font-semibold text-white">Last save</p>
@@ -315,20 +378,21 @@ const App = () => {
           </section>
         </aside>
 
+        {/* MAIN EDITOR VIEW */}
         <main className="bg-slate-100 p-4 lg:p-8">
           <div className="h-full rounded-3xl bg-white p-4 shadow-2xl shadow-slate-900/10">
             <OnlyOfficeEditor
               documentServerUrl={documentServerUrl}
               documentTitle={documentTitle}
               documentUrl={documentUrl}
+              fileType={fileType}
+              documentKey={documentKey}
               mode={mode}
               allowPrint={allowPrint}
               allowDownload={allowDownload}
               enableCollaboration={enableCollaboration}
               onRequestSave={handleSaveRequest}
               onStateChange={handleStateChange}
-              fileType={fileType}
-              documentKey={documentKey}
             />
           </div>
         </main>

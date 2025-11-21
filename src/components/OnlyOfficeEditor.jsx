@@ -16,6 +16,8 @@ const OnlyOfficeEditor = ({
 }) => {
   const saveRef = useRef(onRequestSave);
   const stateRef = useRef(onStateChange);
+  const [editorConfig, setEditorConfig] = useState(null);
+  const [editorId, setEditorId] = useState("");
 
   useEffect(() => {
     saveRef.current = onRequestSave;
@@ -25,17 +27,52 @@ const OnlyOfficeEditor = ({
     stateRef.current = onStateChange;
   }, [onStateChange]);
 
-  const [editorConfig, setEditorConfig] = useState(null);
-  const [editorId, setEditorId] = useState("");
-
+  // Reset editor state when document is cleared
   useEffect(() => {
     if (!documentUrl || !documentKey) {
-      setEditorConfig(null);
-      setEditorId("");
+      // Use a small delay to ensure proper cleanup
+      const timer = setTimeout(() => {
+        setEditorConfig(null);
+        setEditorId("");
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [documentUrl, documentKey]);
+
+  // Helper to destroy existing ONLYOFFICE instances to avoid "instance already exists" errors
+  const destroyEditorInstance = (id) => {
+    if (!id) return;
+
+    const instance = window?.DocEditor?.instances?.[id];
+    if (instance?.destroyEditor) {
+      try {
+        instance.destroyEditor(); 
+      } catch (error) {
+        console.warn(`[OnlyOffice] Failed to destroy editor ${id}`, error);
+      } finally {
+        if (window?.DocEditor?.instances) {
+          window.DocEditor.instances[id] = undefined;
+        }
+      }
+    }
+  };
+
+  // Destroy the editor whenever the id changes or the component unmounts
+  useEffect(() => {
+    return () => {
+      destroyEditorInstance(editorId);
+    };
+  }, [editorId]);
+
+  // Initialize editor when document is available
+  useEffect(() => {
+    if (!documentUrl || !documentKey) {
       return;
     }
 
-    setEditorConfig({
+    const newEditorId = `onlyoffice-${documentKey}-${Date.now()}`;
+    
+    const config = {
       documentType: "word",
       width: "100%",
       height: "100%",
@@ -50,6 +87,7 @@ const OnlyOfficeEditor = ({
           print: allowPrint,
           review: enableCollaboration,
           comment: enableCollaboration,
+          chat: enableCollaboration,
         },
       },
       editorConfig: {
@@ -62,7 +100,6 @@ const OnlyOfficeEditor = ({
         customization: {
           print: allowPrint,
           download: allowDownload,
-          chat: enableCollaboration,
           comments: enableCollaboration,
           help: true,
           hideRightMenu: false,
@@ -85,8 +122,15 @@ const OnlyOfficeEditor = ({
           console.error("ONLYOFFICE editor error", event);
         },
       },
-    });
-    setEditorId(`onlyoffice-${documentKey}`);
+    };
+
+    // Small delay to ensure previous editor is unmounted
+    const timer = setTimeout(() => {
+      setEditorConfig(config);
+      setEditorId(newEditorId);
+    }, 150);
+
+    return () => clearTimeout(timer);
   }, [
     documentUrl,
     documentKey,
@@ -115,9 +159,12 @@ const OnlyOfficeEditor = ({
   }
 
   return (
-    <div className="h-[calc(100vh-2rem)] overflow-hidden rounded-2xl shadow-2xl shadow-slate-900/10">
-      {console.log(editorConfig.document.url)}
+    <div 
+      className="h-[calc(100vh-2rem)] overflow-hidden rounded-2xl shadow-2xl shadow-slate-900/10"
+      key={editorId}
+    >
       <DocumentEditor
+        key={editorId}
         id={editorId}
         documentServerUrl={documentServerUrl}
         config={editorConfig}

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useRef } from "react";
 import OnlyOfficeEditor from "./components/OnlyOfficeEditor.jsx";
 
 const ACCEPTED_TYPES = ".doc,.docx";
@@ -37,6 +37,7 @@ const App = () => {
   const [uploadError, setUploadError] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [currentUploadId, setCurrentUploadId] = useState("");
+  const fileInputRef = useRef(null);
 
   const summary = useMemo(
     () => [
@@ -109,7 +110,12 @@ const App = () => {
       !selected.name.toLowerCase().endsWith(".doc")
     ) {
       setUploadError("Only DOC or DOCX files are supported.");
-      event.target.value = "";
+      if (event.target) {
+        event.target.value = "";
+      }
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
       return;
     }
 
@@ -117,14 +123,26 @@ const App = () => {
     setIsUploading(true);
 
     try {
-      if (currentUploadId) {
-        await deleteUpload(currentUploadId);
+      // Clear current document first to properly unmount the editor
+      const previousUploadId = currentUploadId;
+      if (previousUploadId) {
+        try {
+          await deleteUpload(previousUploadId);
+        } catch (error) {
+          console.warn("Failed to delete previous upload:", error);
+        }
         setCurrentUploadId("");
       }
 
+      // Clear document state to trigger editor unmount
+      setDocumentUrl("");
+      setDocumentKey("");
+      
+      // Small delay to ensure editor is unmounted before loading new document
+      await new Promise(resolve => setTimeout(resolve, 200));
+
       const uploadResult = await uploadFile(selected);
       setDocumentUrl(uploadResult.url);
-      // console.log(uploadResult.url);
       setDocumentTitle(uploadResult.originalName || selected.name);
       setFileType(getFileType(uploadResult.url));
       setDocumentKey(uploadResult.documentKey);
@@ -136,37 +154,97 @@ const App = () => {
       setUploadError(error.message || "Upload failed. Please try again.");
     } finally {
       setIsUploading(false);
-      event.target.value = "";
+      if (event.target) {
+        event.target.value = "";
+      }
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
     }
   };
 
   const applyRemoteUrl = async () => {
     if (!remoteUrlInput) return;
-    if (currentUploadId) {
-      await deleteUpload(currentUploadId);
-      setCurrentUploadId("");
-    }
-    setDocumentUrl(remoteUrlInput);
-    setFileType(getFileType(remoteUrlInput));
-    setDocumentTitle(remoteUrlInput.split("/").pop() || "Remote document");
-    setDocumentKey(randomKey());
+    
     setUploadError("");
-    setIsDirty(false);
+    setIsUploading(true);
+
+    try {
+      // Clear current document first to properly unmount the editor
+      const previousUploadId = currentUploadId;
+      if (previousUploadId) {
+        try {
+          await deleteUpload(previousUploadId);
+        } catch (error) {
+          console.warn("Failed to delete previous upload:", error);
+        }
+        setCurrentUploadId("");
+      }
+
+      // Clear document state to trigger editor unmount
+      setDocumentUrl("");
+      setDocumentKey("");
+      
+      // Small delay to ensure editor is unmounted before loading new document
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      setDocumentUrl(remoteUrlInput);
+      setFileType(getFileType(remoteUrlInput));
+      setDocumentTitle(remoteUrlInput.split("/").pop() || "Remote document");
+      setDocumentKey(randomKey());
+      setIsDirty(false);
+      
+      // Reset file input if it has a value
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    } catch (error) {
+      console.error(error);
+      setUploadError(error.message || "Failed to load remote URL. Please try again.");
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   const clearDocument = async () => {
-    if (currentUploadId) {
-      await deleteUpload(currentUploadId);
-      setCurrentUploadId("");
-    }
+    setUploadError("");
+    setIsUploading(true);
 
-    setDocumentUrl("");
-    setDocumentTitle("");
-    setFileType("docx");
-    setDocumentKey("");
-    setRemoteUrlInput("");
-    setLastSaveEvent(null);
-    setIsDirty(false);
+    try {
+      const previousUploadId = currentUploadId;
+      if (previousUploadId) {
+        try {
+          await deleteUpload(previousUploadId);
+        } 
+        catch (error) {
+          console.warn("Failed to delete upload:", error);
+        }
+        setCurrentUploadId("");
+      }
+
+      // Clear document state - this will trigger editor unmount
+      setDocumentUrl("");
+      setDocumentKey("");
+      
+      // Small delay to ensure editor is properly unmounted
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      setDocumentTitle("");
+      setFileType("docx");
+      setRemoteUrlInput("");
+      setLastSaveEvent(null);
+      setIsDirty(false);
+      
+      // Reset file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    } catch (error) {
+      console.error("Error clearing document:", error);
+      setUploadError("Error clearing document. Please try again.");
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   const fieldLabelClass =
@@ -215,6 +293,7 @@ const App = () => {
             <label className={fieldLabelClass}>
               <span>Select from device</span>
               <input
+                ref={fileInputRef}
                 type="file"
                 accept={ACCEPTED_TYPES}
                 onChange={handleFilePick}

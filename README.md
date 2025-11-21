@@ -39,8 +39,10 @@ component with configurable modes (full editing vs view-only), permissions
 4. **Start the ONLYOFFICE Document Server (Docker)**
 
    ```bash
-   docker run -itd -p 8080:80 --name onlyoffice-document-server onlyoffice/documentserver
+   docker run -i -t -d -p 8080:80 --name onlyoffice -e JWT_ENABLED=false --restart=always  --add-host=host.docker.internal:host-gateway  onlyoffice/documentserver
    ```
+   (Enabled JWT as false for POC purpose, but when you have JWT you need not mention the command in there.
+   Also you need to pass the JWT Token to DocumentEditor with existing props)
 
    Use `http://localhost:8080` (or your remote server) in the UI’s “Document
    Server URL” field.

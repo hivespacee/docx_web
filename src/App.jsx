@@ -8,10 +8,6 @@ const UPLOAD_API_BASE =
   import.meta.env.VITE_UPLOAD_API_URL?.replace(/\/$/, "") ||
   "http://localhost:5174";
 
-const randomKey = () =>
-  window.crypto?.randomUUID?.() ??
-  `doc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
 const getFileType = (name = "") => {
   const match = name.split(".").pop();
   return match ? match.toLowerCase() : "docx";
@@ -102,8 +98,7 @@ const App = () => {
       `Download: ${allowDownload ? "enabled" : "disabled"}`,
       `Collaboration: ${enableCollaboration ? "real-time" : "solo"}`,
       `State: ${isDirty ? "Unsaved changes" : "Synced"}`,
-      `Document Server: ${
-        documentServerUrl ? documentServerUrl : "not configured"
+      `Document Server: ${documentServerUrl ? documentServerUrl : "not configured"
       }`,
       `Upload API: ${UPLOAD_API_BASE}`,
     ],
@@ -145,6 +140,32 @@ const App = () => {
     } catch (error) {
       console.warn("Failed to delete upload", error);
     }
+  };
+
+  const fetchDocumentMetadata = async (url, options = {}) => {
+    const response = await fetch(`${UPLOAD_API_BASE}/api/documents/metadata`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${authToken}`,
+      },
+      body: JSON.stringify({
+        url,
+        title: options.title,
+        originalName: options.originalName,
+      }),
+    });
+
+    const payload = await response.json().catch(() => null);
+    console.log(payload);
+    if (!response.ok || !payload) {
+      if (response.status === 401 || response.status === 403) {
+        handleLogout();
+        throw new Error("Session expired. Please login again.");
+      }
+      throw new Error(payload?.message || "Unable to load document metadata.");
+    }
+    return payload;
   };
 
   const uploadFile = async (file) => {
@@ -205,7 +226,7 @@ const App = () => {
       // Clear document state to trigger editor unmount
       setDocumentUrl("");
       setDocumentKey("");
-      
+
       // Small delay to ensure editor is unmounted before loading new document
       await new Promise(resolve => setTimeout(resolve, 200));
 
@@ -233,7 +254,7 @@ const App = () => {
 
   const applyRemoteUrl = async () => {
     if (!remoteUrlInput) return;
-    
+
     setUploadError("");
     setIsUploading(true);
 
@@ -252,16 +273,21 @@ const App = () => {
       // Clear document state to trigger editor unmount
       setDocumentUrl("");
       setDocumentKey("");
-      
+
       // Small delay to ensure editor is unmounted before loading new document
       await new Promise(resolve => setTimeout(resolve, 200));
 
-      setDocumentUrl(remoteUrlInput);
-      setFileType(getFileType(remoteUrlInput));
-      setDocumentTitle(remoteUrlInput.split("/").pop() || "Remote document");
-      setDocumentKey(randomKey());
+      const remoteTitle = remoteUrlInput.split("/").pop() || "Remote document";
+      const metadata = await fetchDocumentMetadata(remoteUrlInput, {
+        title: remoteTitle,
+      });
+
+      setDocumentUrl(metadata.url || remoteUrlInput);
+      setFileType(getFileType(metadata.url || remoteUrlInput));
+      setDocumentTitle(metadata.title || remoteTitle);
+      setDocumentKey(metadata.documentKey);
       setIsDirty(false);
-      
+
       // Reset file input if it has a value
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
@@ -283,7 +309,7 @@ const App = () => {
       if (previousUploadId) {
         try {
           await deleteUpload(previousUploadId);
-        } 
+        }
         catch (error) {
           console.warn("Failed to delete upload:", error);
         }
@@ -293,7 +319,7 @@ const App = () => {
       // Clear document state - this will trigger editor unmount
       setDocumentUrl("");
       setDocumentKey("");
-      
+
       // Small delay to ensure editor is properly unmounted
       await new Promise(resolve => setTimeout(resolve, 200));
 
@@ -302,7 +328,7 @@ const App = () => {
       setRemoteUrlInput("");
       setLastSaveEvent(null);
       setIsDirty(false);
-      
+
       // Reset file input
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
@@ -471,22 +497,20 @@ const App = () => {
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
-                  className={`${toggleButtonBase} ${
-                    mode === "edit"
+                  className={`${toggleButtonBase} ${mode === "edit"
                       ? "border-sky-400 bg-sky-400 text-slate-900"
                       : "border-white/20 bg-white/5 text-slate-100"
-                  }`}
+                    }`}
                   onClick={() => setMode("edit")}
                 >
                   Full editing
                 </button>
                 <button
                   type="button"
-                  className={`${toggleButtonBase} ${
-                    mode === "view"
+                  className={`${toggleButtonBase} ${mode === "view"
                       ? "border-sky-400 bg-sky-400 text-slate-900"
                       : "border-white/20 bg-white/5 text-slate-100"
-                  }`}
+                    }`}
                   onClick={() => setMode("view")}
                 >
                   View only

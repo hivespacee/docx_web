@@ -44,6 +44,45 @@ const PUBLIC_BASE_URL = 'http://host.docker.internal:5174';
 // JWT Configuration
 const JWT_SECRET = 'JWT-Secret-Key';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h';
+const DOC_KEY_SECRET =
+  process.env.DOC_KEY_SECRET || 'onlyoffice-doc-key-secret';
+
+const documentMetadataStore = new Map();
+
+const normalizeUrl = (url) =>
+  url?.trim().replace(/\s+/g, '').replace(/\/+$/, '').toLowerCase() || '';
+
+const generateDeterministicDocumentKey = (url) =>
+  crypto
+    .createHash('sha256')
+    .update(`${DOC_KEY_SECRET}::${url}`)
+    .digest('hex')
+    .slice(0, 32);
+
+const getOrCreateDocumentMetadata = (url, extra = {}) => {
+  const normalizedUrl = normalizeUrl(url);
+  if (!normalizedUrl) return null;
+
+  const existing = documentMetadataStore.get(normalizedUrl);
+  const documentKey =
+    existing?.documentKey || generateDeterministicDocumentKey(normalizedUrl);
+
+  const metadata = {
+    url,
+    normalizedUrl,
+    documentKey,
+    originalName: extra.originalName || existing?.originalName || '',
+    title: extra.title || existing?.title || extra.originalName || '',
+    lastModifiedAt:
+      extra.lastModifiedAt || existing?.lastModifiedAt || new Date().toISOString(),
+    lastAccessedAt: new Date().toISOString(),
+    ...existing,
+    ...extra,
+  };
+  console.log("Metadata --> ",metadata);
+  documentMetadataStore.set(normalizedUrl, metadata);
+  return metadata;
+};
 
 // Mock users database (in production, this would be a real database)
 const MOCK_USERS = [
@@ -138,7 +177,7 @@ app.post('/api/auth/login', (req, res) => {
     JWT_SECRET,
     { expiresIn: JWT_EXPIRES_IN }
   );
-  console.log("Login token --> ",token);
+  // console.log("Login token --> ",token);
   // Return token and user info (without password)
   const { password: _, ...userWithoutPassword } = user;
   res.json({
@@ -189,7 +228,7 @@ app.post('/api/onlyoffice/token', authenticateToken, (req, res) => {
     const token = jwt.sign(augmentedConfig, JWT_SECRET, {
       expiresIn: '5m',
     });
-    console.log(token);
+    // console.log(token);
     return res.json({
       token,
       issuedAt: new Date().toISOString(),
@@ -202,6 +241,32 @@ app.post('/api/onlyoffice/token', authenticateToken, (req, res) => {
       .status(500)
       .json({ message: 'Unable to sign editor configuration.' });
   }
+});
+
+// Persist & retrieve document metadata keyed by URL
+app.post('/api/documents/metadata', authenticateToken, (req, res) => {
+  const { url, title, originalName } = req.body ?? {};
+  if (!url) {
+    return res.status(400).json({ message: 'Document URL is required.' });
+  }
+
+  const metadata = getOrCreateDocumentMetadata(url, {
+    title,
+    originalName,
+    requestedBy: req.user?.username,
+  });
+
+  if (!metadata) {
+    return res.status(500).json({ message: 'Unable to store document metadata.' });
+  }
+
+  return res.json({
+    documentKey: metadata.documentKey,
+    url: metadata.url,
+    title: metadata.title,
+    originalName: metadata.originalName,
+    lastAccessedAt: metadata.lastAccessedAt,
+  });
 });
 
 app.get('/health', (req, res) => {
@@ -220,12 +285,20 @@ app.post('/api/uploads', authenticateToken, upload.single('file'), (req, res) =>
   }
 
   const uploadId = req.file.filename;
-  const documentKey = crypto.randomUUID();
+  const fileUrl = buildPublicUrl(req, uploadId);
+  const metadata = getOrCreateDocumentMetadata(fileUrl, {
+    originalName: req.file.originalname,
+    mimeType: req.file.mimetype,
+    size: req.file.size,
+    lastModifiedAt: new Date().toISOString(),
+    uploadId,
+  });
+
   const payload = {
     uploadId,
-    documentKey,
+    documentKey: metadata.documentKey,
     originalName: req.file.originalname,
-    url: buildPublicUrl(req, uploadId),
+    url: fileUrl,
     size: req.file.size,
     mimeType: req.file.mimetype,
   };

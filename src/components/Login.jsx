@@ -11,8 +11,8 @@ const MOCK_USERS = [
   },
   {
     id: 2,
-    username: "editor",
-    password: "editor123",
+    username: "amaan",
+    password: "Password@123",
     name: "Document Editor",
     email: "editor@example.com",
   },

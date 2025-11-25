@@ -5,6 +5,7 @@ import path from 'node:path';
 import process from 'node:process';
 import express from 'express';
 import multer from 'multer';
+import jwt from 'jsonwebtoken';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -40,6 +41,35 @@ const app = express();
 const PORT = process.env.UPLOAD_PORT || 5174;
 const PUBLIC_BASE_URL = 'http://host.docker.internal:5174';
 
+// JWT Configuration
+const JWT_SECRET = 'JWT-Secret-Key';
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h';
+
+// Mock users database (in production, this would be a real database)
+const MOCK_USERS = [
+  {
+    id: 1,
+    username: 'admin',
+    password: 'admin123', // In production, use hashed passwords
+    name: 'Administrator',
+    email: 'admin@example.com',
+  },
+  {
+    id: 2,
+    username: 'editor',
+    password: 'editor123',
+    name: 'Document Editor',
+    email: 'editor@example.com',
+  },
+  {
+    id: 3,
+    username: 'viewer',
+    password: 'viewer123',
+    name: 'Document Viewer',
+    email: 'viewer@example.com',
+  },
+];
+
 const buildPublicUrl = (req, fileName) => {
   const base =
     PUBLIC_BASE_URL ||
@@ -62,6 +92,118 @@ app.use(
   }),
 );
 
+// Authentication Middleware
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+
+  if (!token) {
+    return res.status(401).json({ message: 'Access token required' });
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      return res.status(403).json({ message: 'Invalid or expired token' });
+    }
+    req.user = user;
+    next();
+  });
+};
+
+// Authentication Routes
+app.post('/api/auth/login', (req, res) => {
+  const { username, password } = req.body;
+
+  if (!username || !password) {
+    return res.status(400).json({ message: 'Username and password are required' });
+  }
+
+  // Find user in mock database
+  const user = MOCK_USERS.find(
+    (u) => u.username === username && u.password === password
+  );
+
+  if (!user) {
+    return res.status(401).json({ message: 'Invalid username or password' });
+  }
+
+  // Create JWT token
+  const token = jwt.sign(
+    {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      name: user.name,
+    },
+    JWT_SECRET,
+    { expiresIn: JWT_EXPIRES_IN }
+  );
+  console.log("Login token --> ",token);
+  // Return token and user info (without password)
+  const { password: _, ...userWithoutPassword } = user;
+  res.json({
+    token,
+    user: userWithoutPassword,
+    expiresIn: JWT_EXPIRES_IN,
+  });
+});
+
+// Verify token endpoint
+app.get('/api/auth/verify', authenticateToken, (req, res) => {
+  res.json({
+    valid: true,
+    user: req.user,
+  });
+});
+
+// Generate JWT token specifically for OnlyOffice Document Server
+app.post('/api/onlyoffice/token', authenticateToken, (req, res) => {
+  const { config } = req.body ?? {};
+
+  if (!config || typeof config !== 'object') {
+    return res
+      .status(400)
+      .json({ message: 'Editor configuration payload is required.' });
+  }
+
+  if (!config.document || !config.editorConfig) {
+    return res.status(400).json({
+      message:
+        'Editor configuration must include both document and editorConfig sections.',
+    });
+  }
+
+  const augmentedConfig = {
+    ...config,
+    editorConfig: {
+      ...config.editorConfig,
+      user: {
+        id: String(req.user?.id ?? 'user'),
+        name: req.user?.name ?? req.user?.username ?? 'Authenticated User',
+        email: req.user?.email ?? 'user@example.com',
+      },
+    },
+  };
+
+  try {
+    const token = jwt.sign(augmentedConfig, JWT_SECRET, {
+      expiresIn: '5m',
+    });
+    console.log(token);
+    return res.json({
+      token,
+      issuedAt: new Date().toISOString(),
+      expiresIn: '5m',
+    });
+  } 
+  catch (error) {
+    console.error('Failed to sign OnlyOffice config', error);
+    return res
+      .status(500)
+      .json({ message: 'Unable to sign editor configuration.' });
+  }
+});
+
 app.get('/health', (req, res) => {
     res.status(200).json({
       status: 'ok',
@@ -72,7 +214,7 @@ app.get('/health', (req, res) => {
   });
   
 
-app.post('/api/uploads', upload.single('file'), (req, res) => {
+app.post('/api/uploads', authenticateToken, upload.single('file'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ message: 'File is required.' });
   }
@@ -91,7 +233,7 @@ app.post('/api/uploads', upload.single('file'), (req, res) => {
   return res.status(201).json(payload);
 });
 
-app.delete('/api/uploads/:uploadId', async (req, res) => {
+app.delete('/api/uploads/:uploadId', authenticateToken, async (req, res) => {
   const uploadId = path.basename(req.params.uploadId);
   const targetPath = path.join(UPLOAD_DIR, uploadId);
 

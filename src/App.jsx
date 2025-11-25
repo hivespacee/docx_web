@@ -1,5 +1,6 @@
-import React, { useMemo, useState, useRef } from "react";
+import React, { useMemo, useState, useRef, useEffect } from "react";
 import OnlyOfficeEditor from "./components/OnlyOfficeEditor.jsx";
+import Login from "./components/Login.jsx";
 
 const ACCEPTED_TYPES = ".doc,.docx";
 const DEFAULT_DOCUMENT_SERVER = "http://localhost:8080";
@@ -17,6 +18,11 @@ const getFileType = (name = "") => {
 };
 
 const App = () => {
+  // Authentication state
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authToken, setAuthToken] = useState(null);
+  const [user, setUser] = useState(null);
+
   const [documentUrl, setDocumentUrl] = useState("");
   const [documentTitle, setDocumentTitle] = useState("");
   const [fileType, setFileType] = useState("docx");
@@ -38,6 +44,55 @@ const App = () => {
   const [isUploading, setIsUploading] = useState(false);
   const [currentUploadId, setCurrentUploadId] = useState("");
   const fileInputRef = useRef(null);
+
+  // Check for existing authentication on mount
+  useEffect(() => {
+    const storedToken = localStorage.getItem("authToken");
+    const storedUser = localStorage.getItem("user");
+
+    if (storedToken && storedUser) {
+      // Verify token is still valid
+      fetch(`${UPLOAD_API_BASE}/api/auth/verify`, {
+        headers: {
+          Authorization: `Bearer ${storedToken}`,
+        },
+      })
+        .then((res) => {
+          if (res.ok) {
+            setAuthToken(storedToken);
+            setUser(JSON.parse(storedUser));
+            setIsAuthenticated(true);
+          } else {
+            // Token invalid, clear storage
+            localStorage.removeItem("authToken");
+            localStorage.removeItem("user");
+          }
+        })
+        .catch(() => {
+          localStorage.removeItem("authToken");
+          localStorage.removeItem("user");
+        });
+    }
+  }, []);
+
+  const handleLogin = (token, userData) => {
+    setAuthToken(token);
+    setUser(userData);
+    setIsAuthenticated(true);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem("authToken");
+    localStorage.removeItem("user");
+    setAuthToken(null);
+    setUser(null);
+    setIsAuthenticated(false);
+    // Clear document state
+    setDocumentUrl("");
+    setDocumentKey("");
+    setDocumentTitle("");
+    setCurrentUploadId("");
+  };
 
   const summary = useMemo(
     () => [
@@ -78,9 +133,15 @@ const App = () => {
   const deleteUpload = async (uploadId) => {
     if (!uploadId) return;
     try {
-      await fetch(`${UPLOAD_API_BASE}/api/uploads/${uploadId}`, {
+      const response = await fetch(`${UPLOAD_API_BASE}/api/uploads/${uploadId}`, {
         method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+        },
       });
+      if (response.status === 401 || response.status === 403) {
+        handleLogout();
+      }
     } catch (error) {
       console.warn("Failed to delete upload", error);
     }
@@ -91,11 +152,18 @@ const App = () => {
     formData.append("file", file);
     const response = await fetch(`${UPLOAD_API_BASE}/api/uploads`, {
       method: "POST",
+      headers: {
+        Authorization: `Bearer ${authToken}`,
+      },
       body: formData,
     });
     const payload = await response.json().catch(() => null);
     console.log(payload);
     if (!response.ok || !payload) {
+      if (response.status === 401 || response.status === 403) {
+        handleLogout();
+        throw new Error("Session expired. Please login again.");
+      }
       throw new Error(payload?.message || "Upload failed. Please try again.");
     }
     return payload;
@@ -256,10 +324,35 @@ const App = () => {
   const toggleButtonBase =
     "rounded-full border px-4 py-2 text-sm font-semibold transition-colors";
 
+  // Show login page if not authenticated
+  if (!isAuthenticated) {
+    return <Login onLogin={handleLogin} />;
+  }
+
   return (
     <div className="min-h-screen bg-slate-100">
       <div className="grid min-h-screen grid-cols-1 lg:grid-cols-[360px,1fr]">
         <aside className="flex flex-col gap-6 bg-slate-950/95 p-6 text-slate-100 lg:p-8">
+          {/* User Info & Logout */}
+          <section className={`${panelCardClass} flex flex-col gap-4`}>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                  Signed in as
+                </p>
+                <p className="text-lg font-semibold text-white">{user?.name}</p>
+                <p className="text-sm text-slate-400">{user?.email}</p>
+              </div>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="rounded-xl border border-red-500/50 bg-red-500/10 px-3 py-2 text-sm font-semibold text-red-300 transition hover:bg-red-500/20 hover:border-red-500"
+              >
+                Logout
+              </button>
+            </div>
+          </section>
+
           {/* Document Server Settings */}
           <section className={`${panelCardClass} flex flex-col gap-4`}>
             <div>
@@ -470,6 +563,7 @@ const App = () => {
               allowPrint={allowPrint}
               allowDownload={allowDownload}
               enableCollaboration={enableCollaboration}
+              jwtToken={authToken}
               onRequestSave={handleSaveRequest}
               onStateChange={handleStateChange}
             />

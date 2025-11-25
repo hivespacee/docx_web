@@ -1,6 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import { DocumentEditor } from "@onlyoffice/document-editor-react";
 
+const UPLOAD_API_BASE =
+  import.meta.env.VITE_UPLOAD_API_URL?.replace(/\/$/, "") ||
+  "http://localhost:5174";
+
 const OnlyOfficeEditor = ({
   documentServerUrl,
   documentUrl,
@@ -11,6 +15,7 @@ const OnlyOfficeEditor = ({
   allowPrint,
   allowDownload,
   enableCollaboration,
+  jwtToken,
   onRequestSave,
   onStateChange,
 }) => {
@@ -18,6 +23,7 @@ const OnlyOfficeEditor = ({
   const stateRef = useRef(onStateChange);
   const [editorConfig, setEditorConfig] = useState(null);
   const [editorId, setEditorId] = useState("");
+  const [signingError, setSigningError] = useState("");
 
   useEffect(() => {
     saveRef.current = onRequestSave;
@@ -67,12 +73,13 @@ const OnlyOfficeEditor = ({
   // Initialize editor when document is available
   useEffect(() => {
     if (!documentUrl || !documentKey) {
+      setSigningError("");
       return;
     }
 
     const newEditorId = `onlyoffice-${documentKey}-${Date.now()}`;
-    
-    const config = {
+
+    const baseConfig = {
       documentType: "word",
       width: "100%",
       height: "100%",
@@ -124,13 +131,71 @@ const OnlyOfficeEditor = ({
       },
     };
 
-    // Small delay to ensure previous editor is unmounted
-    const timer = setTimeout(() => {
-      setEditorConfig(config);
-      setEditorId(newEditorId);
-    }, 150);
+    let cancelled = false;
+    let timer;
 
-    return () => clearTimeout(timer);
+    const prepareConfig = async () => {
+      try {
+        let finalConfig = baseConfig;
+
+        if (jwtToken) {
+          const response = await fetch(
+            `${UPLOAD_API_BASE}/api/onlyoffice/token`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${jwtToken}`,
+              },
+              body: JSON.stringify({ config: baseConfig }),
+            }
+          );
+
+          if (!response.ok) {
+            const errorPayload = await response.json().catch(() => null);
+            throw new Error(
+              errorPayload?.message ||
+                "Unable to secure document with JWT token."
+            );
+          }
+
+          const data = await response.json();
+          finalConfig = {
+            ...baseConfig,
+            token: data.token,
+          };
+          // console.log(data.token)
+        }
+
+        if (cancelled) return;
+
+        setSigningError("");
+        timer = setTimeout(() => {
+          if (cancelled) return;
+          setEditorConfig(finalConfig);
+          setEditorId(newEditorId);
+        }, 150);
+      } catch (error) {
+        console.error("Failed to prepare OnlyOffice editor", error);
+        if (!cancelled) {
+          setEditorConfig(null);
+          setEditorId("");
+          setSigningError(
+            error.message ||
+              "Unable to prepare secure editor session. Please try again."
+          );
+        }
+      }
+    };
+
+    prepareConfig();
+
+    return () => {
+      cancelled = true;
+      if (timer) {
+        clearTimeout(timer);
+      }
+    };
   }, [
     documentUrl,
     documentKey,
@@ -140,8 +205,9 @@ const OnlyOfficeEditor = ({
     allowPrint,
     allowDownload,
     enableCollaboration,
+    jwtToken,
   ]);
-
+//  console.log(documentKey);
   if (!documentServerUrl) {
     return (
       <div className="flex h-[calc(100vh-2rem)] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-slate-500">
@@ -151,6 +217,17 @@ const OnlyOfficeEditor = ({
   }
 
   if (!editorConfig || !editorId) {
+    if (signingError) {
+      return (
+        <div className="flex h-[calc(100vh-2rem)] flex-col items-center justify-center rounded-2xl border border-dashed border-red-200 bg-red-50 p-8 text-center text-red-600">
+          <p className="text-lg font-semibold">Unable to load secure editor</p>
+          <p className="mt-2 text-sm text-red-500">{signingError}</p>
+          <p className="mt-4 text-xs text-red-400">
+            Try reloading the document or signing in again.
+          </p>
+        </div>
+      );
+    }
     return (
       <div className="flex h-[calc(100vh-2rem)] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-slate-500">
         Select a document to load the editor.

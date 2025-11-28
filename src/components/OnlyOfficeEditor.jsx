@@ -16,6 +16,8 @@ const OnlyOfficeEditor = ({
   allowDownload,
   enableCollaboration,
   jwtToken,
+  isOffline,
+  currentUserName,
   onRequestSave,
   onStateChange,
 }) => {
@@ -108,6 +110,7 @@ const OnlyOfficeEditor = ({
           print: allowPrint,
           download: allowDownload,
           comments: enableCollaboration,
+          autosave: true,
           help: true,
           hideRightMenu: false,
           toolbarNoTabs: false,
@@ -237,9 +240,15 @@ const OnlyOfficeEditor = ({
 
   return (
     <div 
-      className="h-[calc(100vh-2rem)] overflow-hidden rounded-2xl shadow-2xl shadow-slate-900/10"
+      className="relative h-[calc(100vh-2rem)] overflow-hidden rounded-2xl shadow-2xl shadow-slate-900/10"
       key={editorId}
     >
+      {isOffline && (
+        <div className="absolute inset-x-4 top-4 z-10 rounded-xl border border-amber-300/60 bg-amber-50/90 px-4 py-3 text-sm font-medium text-amber-900 shadow">
+          {currentUserName || "You"} appear offline. Collaborators will see you as
+          disconnected until the connection recovers.
+        </div>
+      )}
       <DocumentEditor
         key={editorId}
         id={editorId}

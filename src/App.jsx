@@ -23,6 +23,7 @@ const App = () => {
   const [documentTitle, setDocumentTitle] = useState("");
   const [fileType, setFileType] = useState("docx");
   const [documentKey, setDocumentKey] = useState("");
+  const [formEdited, setFormEdited] = useState(false);
   const [documentServerUrl, setDocumentServerUrl] = useState(
     DEFAULT_DOCUMENT_SERVER
   );
@@ -40,6 +41,7 @@ const App = () => {
   const [isUploading, setIsUploading] = useState(false);
   const [currentUploadId, setCurrentUploadId] = useState("");
   const fileInputRef = useRef(null);
+  const [isOffline, setIsOffline] = useState(!window.navigator.onLine);
 
   // Check for existing authentication on mount
   useEffect(() => {
@@ -70,6 +72,29 @@ const App = () => {
         });
     }
   }, []);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!formEdited) return;
+    const handleBeforeUnload = (event) => {
+      event.preventDefault();
+      event.returnValue =
+        "You have an open document. Are you sure you want to leave?";
+      return event.returnValue;
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [formEdited]);
 
   const handleLogin = (token, userData) => {
     setAuthToken(token);
@@ -112,6 +137,15 @@ const App = () => {
       mode,
     ]
   );
+
+  const handleFormEdited = () => {
+    setFormEdited(prev => {
+      const newValue = !prev;
+      console.log("formEdited", newValue);
+      return newValue;
+    });
+  };
+  
 
   const handleSaveRequest = (saveEvent) => {
     setLastSaveEvent({
@@ -197,7 +231,7 @@ const App = () => {
     if (
       !selected.name.toLowerCase().endsWith(".docx") &&
       !selected.name.toLowerCase().endsWith(".doc")
-    ) {
+    ) { 
       setUploadError("Only DOC or DOCX files are supported.");
       if (event.target) {
         event.target.value = "";
@@ -379,6 +413,16 @@ const App = () => {
             </div>
           </section>
 
+          {isOffline && (
+            <section className={`${panelCardClass} border-amber-300/40 bg-amber-500/10 text-amber-100`}>
+              <p className="text-sm font-semibold">Offline mode</p>
+              <p className="text-xs text-amber-200">
+                Connection lost. Edits will sync automatically once you are back
+                online.
+              </p>
+            </section>
+          )}
+
           {/* Document Server Settings */}
           <section className={`${panelCardClass} flex flex-col gap-4`}>
             <div>
@@ -415,7 +459,10 @@ const App = () => {
                 ref={fileInputRef}
                 type="file"
                 accept={ACCEPTED_TYPES}
-                onChange={handleFilePick}
+                onChange={(e) => {
+                  handleFilePick(e);
+                  handleFormEdited?.(e);  // Optional chaining if handleFileChange might not exist
+                }}
                 disabled={isUploading}
                 className="text-sm text-slate-100 file:mr-4 file:rounded-lg file:border-0 file:bg-sky-500 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-slate-900 hover:file:bg-sky-400 disabled:cursor-not-allowed disabled:opacity-50"
               />
@@ -430,7 +477,10 @@ const App = () => {
               <input
                 type="url"
                 value={remoteUrlInput}
-                onChange={(e) => setRemoteUrlInput(e.target.value)}
+                onChange={(e) => {
+                  handleFormEdited();
+                  setRemoteUrlInput(e.target.value)
+                }}
                 placeholder="https://example.com/file.docx"
                 className={inputClass}
               />
@@ -498,8 +548,8 @@ const App = () => {
                 <button
                   type="button"
                   className={`${toggleButtonBase} ${mode === "edit"
-                      ? "border-sky-400 bg-sky-400 text-slate-900"
-                      : "border-white/20 bg-white/5 text-slate-100"
+                    ? "border-sky-400 bg-sky-400 text-slate-900"
+                    : "border-white/20 bg-white/5 text-slate-100"
                     }`}
                   onClick={() => setMode("edit")}
                 >
@@ -508,8 +558,8 @@ const App = () => {
                 <button
                   type="button"
                   className={`${toggleButtonBase} ${mode === "view"
-                      ? "border-sky-400 bg-sky-400 text-slate-900"
-                      : "border-white/20 bg-white/5 text-slate-100"
+                    ? "border-sky-400 bg-sky-400 text-slate-900"
+                    : "border-white/20 bg-white/5 text-slate-100"
                     }`}
                   onClick={() => setMode("view")}
                 >
@@ -587,6 +637,8 @@ const App = () => {
               allowPrint={allowPrint}
               allowDownload={allowDownload}
               enableCollaboration={enableCollaboration}
+              isOffline={isOffline}
+              currentUserName={user?.name || user?.username || "You"}
               jwtToken={authToken}
               onRequestSave={handleSaveRequest}
               onStateChange={handleStateChange}

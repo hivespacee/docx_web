@@ -2,7 +2,7 @@ import React, { useMemo, useState, useRef, useEffect } from "react";
 import OnlyOfficeEditor from "./components/OnlyOfficeEditor.jsx";
 import Login from "./components/Login.jsx";
 
-const ACCEPTED_TYPES = ".doc,.docx";
+const ACCEPTED_TYPES = ".doc,.docx,#";
 const DEFAULT_DOCUMENT_SERVER = "http://localhost:8080";
 const UPLOAD_API_BASE =
   import.meta.env.VITE_UPLOAD_API_URL?.replace(/\/$/, "") ||

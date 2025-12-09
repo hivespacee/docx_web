@@ -7,6 +7,8 @@ import express from 'express';
 import multer from 'multer';
 import jwt from 'jsonwebtoken';
 import { fileURLToPath } from 'node:url';
+import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -47,6 +49,15 @@ const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h';
 const DOC_KEY_SECRET =
   process.env.DOC_KEY_SECRET || 'onlyoffice-doc-key-secret';
 
+// S3 configuration (used for presigned URLs when working with private buckets)
+const AWS_REGION = process.env.AWS_REGION || 'ap-south-2';
+const S3_PRESIGN_ENABLED = process.env.S3_PRESIGN_ENABLED === 'false';
+
+const s3Client =
+  AWS_REGION && S3_PRESIGN_ENABLED
+    ? new S3Client({ region: AWS_REGION })
+    : null;
+
 const documentMetadataStore = new Map();
 
 const normalizeUrl = (url) =>
@@ -79,33 +90,80 @@ const getOrCreateDocumentMetadata = (url, extra = {}) => {
     ...existing,
     ...extra,
   };
-  console.log("Metadata --> ",metadata);
+  // console.log("Metadata --> ",metadata);
   documentMetadataStore.set(normalizedUrl, metadata);
   return metadata;
+};
+
+// ---- S3 helper utilities --------------------------------------------------
+
+// Very small heuristic to detect S3-style URLs. You can refine this if needed.
+const isS3Url = (url) => {
+  if (!url) return false;
+  try {
+    const u = new URL(url);
+    return u.hostname.includes('amazonaws.com');
+    
+  } catch (error) {
+    console.error('Error in isS3Url --> ',error);
+    return false;
+  }
+};
+
+// Parse a standard virtual-hosted–style S3 URL:
+//   https://my-bucket.s3.<region>.amazonaws.com/path/to/file.docx
+// and return { bucket, key }.
+const parseS3Url = (url) => {
+  const u = new URL(url);
+  const hostParts = u.hostname.split('.');
+  const bucket = hostParts[0];
+  const key = u.pathname.replace(/^\/+/, '');
+  if (!bucket || !key) {
+    throw new Error('Unable to parse S3 URL for presigning.');
+  }
+  return { bucket, key };
+};
+
+const getPresignedS3Url = async (url, expiresInSeconds = 300) => {
+  if (!s3Client) {
+    throw new Error(
+      'S3 client not configured. Set AWS_REGION and ensure S3_PRESIGN_ENABLED is not false.',
+    );
+  }
+  const { bucket, key } = parseS3Url(url);
+  const command = new GetObjectCommand({ Bucket: bucket, Key: key });
+  return getSignedUrl(s3Client, command, { expiresIn: expiresInSeconds });
 };
 
 // Mock users database (in production, this would be a real database)
 const MOCK_USERS = [
   {
     id: 1,
-    username: 'admin',
-    password: 'admin123', // In production, use hashed passwords
-    name: 'Administrator',
-    email: 'admin@example.com',
+    username: "admin",
+    password: "admin123",
+    name: "Administrator",
+    email: "admin@example.com",
   },
   {
     id: 2,
-    username: 'editor',
-    password: 'editor123',
-    name: 'Document Editor',
-    email: 'editor@example.com',
+    username: "editor",
+    password: "editor123",
+    name: "Document Editor",
+    email: "editor@example.com",
   },
   {
     id: 3,
-    username: 'viewer',
-    password: 'viewer123',
-    name: 'Document Viewer',
-    email: 'viewer@example.com',
+    username: "viewer",
+    password: "viewer123",
+    name: "Document Viewer",
+    email: "viewer@example.com",
+  },
+  {
+    id: 4,
+    username: "amaan",
+    password: "amaan123",
+    name: "Amaan Doc",
+    email: "amaan@example.com",
   },
 ];
 
@@ -244,29 +302,52 @@ app.post('/api/onlyoffice/token', authenticateToken, (req, res) => {
 });
 
 // Persist & retrieve document metadata keyed by URL
-app.post('/api/documents/metadata', authenticateToken, (req, res) => {
-  const { url, title, originalName } = req.body ?? {};
-  if (!url) {
-    return res.status(400).json({ message: 'Document URL is required.' });
+// For S3 URLs, this will transparently generate a short‑lived presigned URL
+// so ONLYOFFICE can access documents from a private bucket.
+app.post('/api/documents/metadata', authenticateToken, async (req, res) => {
+  try {
+    const { url, title, originalName } = req.body ?? {};
+    if (!url) {
+      return res.status(400).json({ message: 'Document URL is required.' });
+    }
+
+    let effectiveUrl = url;
+    console.log("effectiveUrl --> ",effectiveUrl);
+
+    if (S3_PRESIGN_ENABLED && isS3Url(url)) {
+      try {
+        effectiveUrl = await getPresignedS3Url(url, 300); // 5 minutes
+      } catch (err) {
+        console.error('Failed to generate S3 presigned URL', err);
+        return res
+          .status(500)
+          .json({ message: 'Unable to generate S3 presigned URL.' });
+      }
+    }
+
+    const metadata = getOrCreateDocumentMetadata(effectiveUrl, {
+      title,
+      originalName,
+      requestedBy: req.user?.username,
+    });
+
+    if (!metadata) {
+      return res
+        .status(500)
+        .json({ message: 'Unable to store document metadata.' });
+    }
+    console.log("Metadata URL --> ",metadata.url);
+    return res.json({
+      documentKey: metadata.documentKey,
+      url: metadata.url,
+      title: metadata.title,
+      originalName: metadata.originalName,
+      lastAccessedAt: metadata.lastAccessedAt,
+    });
+  } catch (error) {
+    console.error('Metadata handler error:', error);
+    return res.status(500).json({ message: 'Failed to load document metadata.' });
   }
-
-  const metadata = getOrCreateDocumentMetadata(url, {
-    title,
-    originalName,
-    requestedBy: req.user?.username,
-  });
-
-  if (!metadata) {
-    return res.status(500).json({ message: 'Unable to store document metadata.' });
-  }
-
-  return res.json({
-    documentKey: metadata.documentKey,
-    url: metadata.url,
-    title: metadata.title,
-    originalName: metadata.originalName,
-    lastAccessedAt: metadata.lastAccessedAt,
-  });
 });
 
 app.get('/health', (req, res) => {

@@ -23,6 +23,13 @@ const MOCK_USERS = [
     name: "Document Viewer",
     email: "viewer@example.com",
   },
+  {
+    id: 4,
+    username: "amaan",
+    password: "amaan123",
+    name: "Amaan Doc",
+    email: "amaan@example.com",
+  },
 ];
 
 const Login = ({ onLogin }) => {

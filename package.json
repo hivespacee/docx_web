@@ -12,6 +12,8 @@
   },
   "dependencies": {
     "@onlyoffice/document-editor-react": "^2.1.1",
+    "@aws-sdk/client-s3": "^3.744.0",
+    "@aws-sdk/s3-request-presigner": "^3.744.0",
     "cors": "^2.8.5",
     "docx": "^9.5.1",
     "express": "^4.21.2",

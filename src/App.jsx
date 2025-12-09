@@ -2,15 +2,28 @@ import React, { useMemo, useState, useRef, useEffect } from "react";
 import OnlyOfficeEditor from "./components/OnlyOfficeEditor.jsx";
 import Login from "./components/Login.jsx";
 
-const ACCEPTED_TYPES = ".doc,.docx,#";
+const ACCEPTED_TYPES = ".doc,.docx";
 const DEFAULT_DOCUMENT_SERVER = "http://localhost:8080";
 const UPLOAD_API_BASE =
   import.meta.env.VITE_UPLOAD_API_URL?.replace(/\/$/, "") ||
   "http://localhost:5174";
 
-const getFileType = (name = "") => {
-  const match = name.split(".").pop();
-  return match ? match.toLowerCase() : "docx";
+// Determine ONLYOFFICE fileType from a filename or URL.
+// Strips query/fragment and safely falls back to "docx".
+const getFileType = (nameOrUrl = "") => {
+  if (!nameOrUrl) return "docx";
+  try {
+    // Remove query string / fragment if present
+    const clean = nameOrUrl.split("?")[0].split("#")[0];
+    const lastSegment = clean.split("/").pop() || clean;
+    const ext = lastSegment.split(".").pop()?.toLowerCase();
+    if (ext === "doc" || ext === "docx") {
+      return ext;
+    }
+    return "docx";
+  } catch {
+    return "docx";
+  }
 };
 
 const App = () => {
@@ -141,9 +154,9 @@ const App = () => {
   const handleFormEdited = () => {
     setFormEdited(prev => {
       const newValue = !prev;
-      console.log("formEdited", newValue);
       return newValue;
     });
+    console.log("formEdited", formEdited);
   };
   
 
@@ -266,8 +279,9 @@ const App = () => {
 
       const uploadResult = await uploadFile(selected);
       setDocumentUrl(uploadResult.url);
-      setDocumentTitle(uploadResult.originalName || selected.name);
-      setFileType(getFileType(uploadResult.url));
+      const effectiveName = uploadResult.originalName || selected.name;
+      setDocumentTitle(effectiveName);
+      setFileType(getFileType(effectiveName));
       setDocumentKey(uploadResult.documentKey);
       setRemoteUrlInput("");
       setCurrentUploadId(uploadResult.uploadId || "");
@@ -317,7 +331,8 @@ const App = () => {
       });
 
       setDocumentUrl(metadata.url || remoteUrlInput);
-      setFileType(getFileType(metadata.url || remoteUrlInput));
+      const effectiveName = metadata.originalName || metadata.title || remoteTitle;
+      setFileType(getFileType(effectiveName));
       setDocumentTitle(metadata.title || remoteTitle);
       setDocumentKey(metadata.documentKey);
       setIsDirty(false);
